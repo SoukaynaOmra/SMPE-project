@@ -1,0 +1,344 @@
+---
+title: Latency and capacity estimation for a network connection from asymmetric measurements
+author: "OMRACHI soukayna"
+date: "28/12/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+We use a simple model to evaluate the performance of a network connection while assuming that:
+                         T(S) = L + S/C
+T : time requiered transmitting a message (ms)
+S : size of the message in bytes
+L : latency in seconds
+C : capacity of the network (bytes/second)
+
+In order to evaluate the latency L and the capacity C of this network, we need to analyse a several series of observations of sending time T for different values of S, based on linear regression approach and other approaches.
+
+In this analysis we use two datasets:
+
+    1-The first dataset explores a short on-campus connection,
+    2-The second dataset measures the performance of a connection to a remote Web site that is popular and therefore       has a heavy load.
+    
+###### Uploading and cleaning my data frame (dataset 1)
+
+Let's start with our first dataset (on-campus connection)
+We need to prepare our dataset and check its integrity
+
+## loading library 
+
+```{r}
+library(dplyr)               # used to manipulate data and to work with data frame like objects
+library(lubridate)           # make dealing with our dates and times easier
+library(tidyr)               # make it easy to “tidy” our data
+                             # The two most important properties of tidy data are:
+                                                 ## Each column is a variable.
+                                                 ## Each row is an observation.
+
+```
+
+## loading our data set 
+
+First step is to read the data from the file liglab2.log.
+Second step is to select the columns that we need for our analyse (v1 for date, v2 for size of message, v9 for the time requiered for sending data).
+
+```{r}
+myDataset = read.table('liglab2.log', sep=' ' , na.strings = ""  , header=FALSE , fill = TRUE  )
+myDataset = myDataset %>% select(V1, V2, V9) 
+head(myDataset);
+```
+
+## remove NA values from our data frame
+
+Our analysis might require that all rows in a table have complete cases (i.e. no missing values). We can use the  function(x) any(is.na(x))  to eliminate lines without available data.
+
+```{r}
+line_NA  = apply(myDataset , 1 , function(x) any(is.na(x)))
+myDataset =myDataset %>% drop_na()
+```
+
+Then, we change the name of our columns
+
+```{r}
+names(myDataset)[1] <- "date";
+names(myDataset)[2] <- "size";
+names(myDataset)[3] <- "time";
+
+head(myDataset);
+tail(myDataset)
+```
+
+## convert Time function
+
+We need to convert the time of transmission to double, and to convert the string in the date column into signifant format.
+
+```{r}
+convertTime = function(time)
+  gsub("[^0-9.]", "", time)
+myDataset$time = as.numeric(sapply(myDataset$time , convertTime))
+options(digits = 16)
+myDataset$date = as.double(sapply(myDataset$date , convertTime))
+head(myDataset);
+```
+ 
+ We see here that we have our dataset with signifant format of the date, size and time.
+ 
+###### Plotting data
+
+we need here to plot the time evolution of transmission time
+
+```{r}
+plot(myDataset$time, col="black")
+summary(myDataset)
+```
+As we can see it seems that our data is not well explained, so I think we should observe the evolution of the time of transmission for several smaller ranges. 
+Here we plot two samples of our data, one from column 1 to 1600 and the other from 10000 to 16000.
+
+```{r}
+plot(myDataset$time, xlim=c(1,1600), ylim=c(0,250),col="black")
+plot(myDataset$time, xlim=c(10000,16000), ylim=c(0,250),col="black")
+```
+We can here observe that the time required for transmitting a message can increase suddenly to 100 ms several times. However, for the rest of the time, the time of  transmission is clearly near to the minimum.
+So, we need to know if those variations could be explained solely by message size?
+
+We need here to plot the transmission time as a function of message size:
+
+```{r}
+library("ggplot2")
+ggplot(data = myDataset, mapping = aes(x = size, y = time)) + 
+    theme_bw() +
+    geom_point()
+
+```
+
+We can observe that we have two main behaviors: 
+       - The first one is when message size is less than 1480 
+       - The second behavior is when messgae size is higher than 1480. 
+       
+To explain this difference, we know that the maximum size of an ethernet packet is 1500 Bytes (about 1480 for       data + 20 bytes for headers). So, when packet size exceeds  the maximum size allowed, we use the  fragmentation, it means that we need to split our data to several packets and send them.In consequence the time required for the transmission of the message when its size exceeds 1480 bytes could increase.
+
+In result, we are gonna to divide our data into two classes. Thr first class is for data when message size is less than 1480 and the other class for data when message size is greater than 1480.
+
+```{r}
+df.sub1= filter(myDataset, size < 1480)
+df.sub2= filter(myDataset, size >= 1480)
+par(mfrow=c(1,2));
+plot(df.sub1$time, col="black")
+plot(df.sub2$time, col="black")
+par(mfrow=c(1,1))
+
+```
+
+###### Analyze: Linear regression  
+
+## first dataset (message size less than 1480) 
+
+we plot the first dataset, and zoom it to have a better look to our data.
+
+```{r}
+ggplot(data = df.sub1, mapping = aes(x = size, y = time)) + 
+  ggtitle("data when message size less than 1480 ")+
+  theme_bw() +
+  geom_point() + xlim(0, 1500);
+
+```
+
+```{r}
+ggplot(data = df.sub1, mapping = aes(x = size, y = time)) +
+  ggtitle("data when message size less than 1480 ")+
+    geom_point() +
+    theme_bw() +
+    xlim(500,600) +
+    ylim(1,1.25)
+```
+Here, we plot our dataset with linear regression .
+
+```{r}
+ggplot(data=df.sub1,aes(x=size,y=time)) + theme_bw() +
+  ggtitle("linear regression while message size less than 1480 ")+
+    geom_point(color="black") +
+    geom_smooth(method='lm',color="blue")
+```
+we are going to zoom an interval time from 0.9 ms to 4 ms to observe better our data.
+
+```{r}
+ggplot(data=df.sub1,aes(x=size,y=time)) + theme_bw() +
+  ggtitle("linear regression while message size less than 1480 ")+
+    geom_point(color="black") +
+    geom_smooth(method='lm',color="blue")+ 
+    coord_cartesian(ylim=c(0.9, 4))
+```
+
+we need then to check our model:
+
+```{r}
+linear_reg <- lm(time ~ size,data=df.sub1) 
+summary(linear_reg);
+```
+
+We use summary to have several informations about our model.
+  - R-squared: the value is very low (near to 0), we can conclude that the fitting of our model is not good.
+  - Degree of freedom: we have here a small R squared, which means that the number of parameters used in our model is not high, so we gain in term of confidence and freedom.
+  - Intercept:  3.276 (-/+) 2*7.23e-02
+  - capacity = 1/intercept (bytes/s)
+  - Latency = 3.24 (-/+) 2* 8.5e-05 (ms)
+  
+We need now to check our hypothesis:
+
+```{r}
+par(mfrow=c(2,2));
+plot(linear_reg);
+par(mfrow=c(1,1))
+```
+
+- risiduals vs fitted values: what we are looking here is the noise that should be independent,if our model is true we should see something homoscedastic, which is not the case here because we have some wrong patterns.
+- normality qq plots: we compare here our samples with a theoretical distribution, for every value we are plotting the position with the respected theoretcal quantile.
+
+## second dataset (message size more than 1480) 
+
+Let's do the same thing for the second dataset
+
+```{r}
+ggplot(data = df.sub2, mapping = aes(x = size, y = time)) + 
+  ggtitle("data while message size more than 1480 ")+
+  theme_bw() +
+    geom_point() + xlim(1480, 2100);
+```
+```{r}
+ggplot(data = df.sub2, mapping = aes(x = size, y = time)) +
+  ggtitle("data while message size more than 1480 ")+
+    geom_point() +
+    theme_bw() +
+    xlim(1600,1700) +
+    ylim(2,2.3)
+```
+```{r}
+ggplot(data=df.sub2,aes(x=size,y=time)) + theme_bw() +
+  ggtitle("linear regression while message size more than 1480 ")+
+    geom_point(color="black") +
+    geom_smooth(method='lm',color="blue")
+```
+
+```{r}
+ggplot(data=df.sub2,aes(x=size,y=time)) + theme_bw() +
+  ggtitle("linear regression while message size more than 1480 ")+
+    geom_point(color="black") +
+    geom_smooth(method='lm',color="blue")+
+     coord_cartesian(ylim=c(0.9, 20))
+```
+```{r}
+linear_reg2 <- lm(time ~ size,data=df.sub2) 
+summary(linear_reg2);
+
+```
+We check our model.
+  - R-squared: the value is very low (near to 0), we can conclude that the fitting of our model is not good.
+  - Degree of freedom: we have here a small R squared, which means that the number of parameters used in our model is not high, so we gain in term of confidence and freedom.
+  - Intercept:  5.144 (-/+) 2*2.23
+  - capacity = 1/intercept )(bytes/s)
+  - Latency = 0.0026 (-/+) 2* 0.0012 (ms)
+  
+We need now to check our hypothesis:
+```{r}
+par(mfrow=c(2,2));
+plot(linear_reg2);
+par(mfrow=c(1,1))
+```
+similar to what we have said for the first dataset
+
+we superpose here linear regression for the two dataset
+
+```{r}
+ggplot(data = myDataset,aes(x=size,y=time)) + theme_bw() +
+  ggtitle("linear regression ")+
+    geom_point(color="black") +
+    geom_smooth(method='lm',data= df.sub1,color="blue")+          
+  geom_smooth(method='lm',data= df.sub2,color="red")
+```
+###### Analyze: second approach: filtering data while selecting the smallest times per sizes  
+
+## first dataset (message size less than 1480) 
+```{r}
+df.sub1.min = aggregate(time ~ size, df.sub1, min)
+ggplot(data = df.sub1.min, mapping = aes(x = size, y = time)) +
+   ggtitle(" message size less than 1480")+
+    geom_point(color="black") +
+    theme_bw() +
+    geom_smooth(method='lm',data= df.sub1.min,color="blue")+
+    coord_cartesian(ylim=c(1, 1.4))
+    
+```
+we check our model
+
+```{r}
+linear.reg.min1 <- lm(time ~ size,data=df.sub1.min) 
+summary(linear.reg.min1);
+```
+The summary of our regression shows that R-squared is close to 1, that means that the fitting of our model is very good. 
+
+```{r}
+par(mfrow=c(2,2));
+plot(linear.reg.min1);
+par(mfrow=c(1,1))
+```
+
+- risiduals vs fitted values: what we are looking here is the noise that should be independent,if our model is true we should see something homoscedastic, which is the case here
+
+## second dataset (message size more than 1480) 
+
+```{r}
+df.sub2.min = aggregate(time ~ size, df.sub2, min)
+ggplot(data = df.sub2.min, mapping = aes(x = size, y = time)) +
+  ggtitle(" message size more than 1480")+
+    geom_point(color="black") +
+    theme_bw() +
+    geom_smooth(method='lm',data= df.sub2.min,color="blue")+
+    coord_cartesian(ylim=c(2, 2.5))
+```
+```{r}
+linear.reg.min2 <- lm(time ~ size,data=df.sub2.min) 
+summary(linear.reg.min2);
+```
+we have a small R-squared which is too bad because our model doesn't take into consideration the fragmentation of the packets when the message size exceeds 1480 bytes.
+ 
+```{r}
+par(mfrow=c(2,2));
+plot(linear.reg.min2);
+par(mfrow=c(1,1))
+```
+- risiduals vs fitted values: what we are looking here is the noise that should be independent,if our model is true we should see something homoscedastic, which is the case here
+
+###### Analyze: third approach: quantile regression  
+
+## first dataset (message size less than 1480)
+
+```{r}
+library(quantreg)
+ggplot(data=df.sub1,aes(x=size,y=time)) + theme_bw() +
+    geom_point(color="black") +
+    geom_smooth(method='lm',color="blue") +
+    geom_quantile(quantiles = 1:9/10 , color="red")+
+  coord_cartesian(ylim=c(0.9, 20))
+    
+```
+
+## second dataset (message size more than 1480)
+
+```{r}
+ggplot(data=df.sub2,aes(x=size,y=time)) + theme_bw() +
+    geom_point(color="black") +
+    geom_smooth(method='lm',color="blue") +
+    geom_quantile(quantiles = 1:9/10 , color="red")+
+    coord_cartesian(ylim=c(0.9, 50))
+```
+
+```{r}
+ggplot(data=myDataset,aes(x=size,y=time)) + theme_bw() +
+    geom_point(color="black") +
+    geom_smooth(method='lm',color="blue", data=df.sub1) +
+    geom_quantile(quantiles = 1:9/10 ,data=df.sub1, color="red")+
+  geom_smooth(method='lm',color="brown", data=df.sub2) +
+    geom_quantile(quantiles = 1:9/10 ,data=df.sub2, color="yellow")
+```
